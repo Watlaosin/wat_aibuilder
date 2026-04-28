@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": ["lmstudio"],
+  "model": "lmstudio/qwen3.5-9b",
+  "small_model": "lmstudio/qwen3.5-9b",
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio",
+      "options": {
+        "baseURL": "http://127.0.0.1:1234/v1",
+        "apiKey": "lm-studio"
+      },
+      "models": {
+        "lmstudio/qwen3.5-9b": {
+          "name": "qwen/qwen3.5-9b"
+        }
+      }
+    }
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": "ask"
+  },
+  "plugin": [],
+  "mcp": {}
+}
