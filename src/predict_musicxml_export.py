@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import argparse
+import csv
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GCNConv
+
+from parser import load_score, extract_notes
+from graph_builder import build_graph
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = BASE_DIR / "best_synthetic_gcn.pt"
+OUTPUT_DIR = BASE_DIR / "predictions"
+
+LABEL_NAMES = ["scale", "arpeggio", "chord", "jump"]
+
+
+class TechniqueGCN(nn.Module):
+    def __init__(self, in_channels: int, hidden_channels: int = 64, out_channels: int = 4):
+        super().__init__()
+        self.conv1 = GCNConv(in_channels, hidden_channels)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels)
+        self.classifier = nn.Linear(hidden_channels, out_channels)
+
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = self.conv2(x, edge_index)
+        x = F.relu(x)
+        return self.classifier(x)
+
+
+def get_note_value(note, field: str, default=None):
+    if field in note.dtype.names:
+        value = note[field]
+        return value.item() if hasattr(value, "item") else value
+    return default
+
+
+def midi_to_name(pitch: int) -> str:
+    names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    return f"{names[pitch % 12]}{pitch // 12 - 1}"
+
+
+def predict(score_path: Path, threshold: float = 0.5):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    score = load_score(str(score_path))
+    note_array = extract_notes(score)
+
+    data = build_graph(note_array)
+
+    model = TechniqueGCN(in_channels=data.x.shape[1]).to(device)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.eval()
+
+    data = data.to(device)
+
+    with torch.no_grad():
+        logits = model(data.x, data.edge_index)
+        probs = torch.sigmoid(logits).cpu()
+
+    rows = []
+
+    for i, note in enumerate(note_array):
+        pitch = int(get_note_value(note, "pitch", 60))
+        onset = float(get_note_value(note, "onset_beat", 0.0))
+        duration = float(get_note_value(note, "duration_beat", 1.0))
+        voice = int(get_note_value(note, "voice", 0))
+
+        note_probs = probs[i]
+        predicted_labels = [
+            LABEL_NAMES[j]
+            for j, p in enumerate(note_probs)
+            if float(p) >= threshold
+        ]
+
+        if not predicted_labels:
+            predicted_labels = ["none"]
+
+        top_index = int(torch.argmax(note_probs).item())
+
+        rows.append({
+            "note_id": i,
+            "pitch": pitch,
+            "note_name": midi_to_name(pitch),
+            "onset_beat": onset,
+            "duration_beat": duration,
+            "voice": voice,
+            "predicted_labels": "+".join(predicted_labels),
+            "top_label": LABEL_NAMES[top_index],
+            "scale_prob": float(note_probs[0]),
+            "arpeggio_prob": float(note_probs[1]),
+            "chord_prob": float(note_probs[2]),
+            "jump_prob": float(note_probs[3]),
+        })
+
+    return rows
+
+
+def save_csv(rows: list[dict], output_path: Path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def save_piano_roll(rows: list[dict], output_path: Path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    label_colors = {
+        "scale": "tab:blue",
+        "arpeggio": "tab:green",
+        "chord": "tab:purple",
+        "jump": "tab:red",
+        "none": "gray",
+    }
+
+    plt.figure(figsize=(16, 7))
+
+    for row in rows:
+        onset = row["onset_beat"]
+        duration = row["duration_beat"]
+        pitch = row["pitch"]
+        label = row["top_label"]
+
+        plt.hlines(
+            y=pitch,
+            xmin=onset,
+            xmax=onset + duration,
+            linewidth=6,
+            color=label_colors.get(label, "gray"),
+        )
+
+        plt.text(
+            onset,
+            pitch + 0.25,
+            str(row["note_id"]),
+            fontsize=7,
+        )
+
+    plt.xlabel("Onset beat")
+    plt.ylabel("Pitch MIDI")
+    plt.title("Predicted Piano Roll")
+
+    legend_handles = [
+        plt.Line2D([0], [0], color=color, lw=6, label=label)
+        for label, color in label_colors.items()
+    ]
+    plt.legend(handles=legend_handles, loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("score", type=Path)
+    parser.add_argument("--threshold", type=float, default=0.5)
+    args = parser.parse_args()
+
+    rows = predict(args.score, threshold=args.threshold)
+
+    base_name = args.score.stem
+    csv_path = OUTPUT_DIR / f"{base_name}_predictions.csv"
+    png_path = OUTPUT_DIR / f"{base_name}_piano_roll.png"
+
+    save_csv(rows, csv_path)
+    save_piano_roll(rows, png_path)
+
+    print(f"Saved CSV: {csv_path}")
+    print(f"Saved piano roll: {png_path}")
+
+
+if __name__ == "__main__":
+    main()
