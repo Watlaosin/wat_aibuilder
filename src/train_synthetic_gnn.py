@@ -8,28 +8,56 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 GRAPH_DIR = BASE_DIR / "dataset" / "synthetic_graphs"
-MODEL_PATH = BASE_DIR / "best_synthetic_gcn.pt"
+MODEL_PATH = BASE_DIR / "best_synthetic_gine.pt"
 
 LABEL_NAMES = ["scale", "arpeggio", "chord", "jump"]
 
 
-class TechniqueGCN(nn.Module):
-    def __init__(self, in_channels: int, hidden_channels: int = 64, out_channels: int = 4):
+from torch_geometric.nn import GINEConv
+
+
+class TechniqueGINE(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        edge_dim: int,
+        hidden_channels: int = 64,
+        out_channels: int = 4,
+    ):
         super().__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
+
+        self.node_encoder = nn.Linear(in_channels, hidden_channels)
+
+        nn1 = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels),
+        )
+
+        nn2 = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels),
+        )
+
+        self.conv1 = GINEConv(nn1, edge_dim=edge_dim)
+        self.conv2 = GINEConv(nn2, edge_dim=edge_dim)
+
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index)
+    def forward(self, x, edge_index, edge_attr):
+        x = self.node_encoder(x)
+
+        x = self.conv1(x, edge_index, edge_attr)
         x = F.relu(x)
-        x = self.conv2(x, edge_index)
+
+        x = self.conv2(x, edge_index, edge_attr)
         x = F.relu(x)
+
         return self.classifier(x)
 
 
@@ -100,7 +128,7 @@ def evaluate(model, loader, criterion, device):
     for data in loader:
         data = data.to(device)
 
-        logits = model(data.x, data.edge_index)
+        logits = model(data.x, data.edge_index, data.edge_attr)
         target_logits = logits[data.target_mask]
         target_y = data.y[data.target_mask]
 
@@ -128,7 +156,12 @@ def train():
     print(f"Train graphs: {len(train_graphs)} | Val graphs: {len(val_graphs)} | Test graphs: {len(test_graphs)}")
 
     in_channels = graphs[0].x.shape[1]
-    model = TechniqueGCN(in_channels=in_channels).to(device)
+    edge_dim = graphs[0].edge_attr.shape[1]
+
+    model = TechniqueGINE(
+        in_channels=in_channels,
+        edge_dim=edge_dim,
+    ).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
@@ -148,7 +181,7 @@ def train():
 
             optimizer.zero_grad()
 
-            logits = model(data.x, data.edge_index)
+            logits = model(data.x, data.edge_index, data.edge_attr)
             target_logits = logits[data.target_mask]
             target_y = data.y[data.target_mask]
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import partitura as pt
+import xml.etree.ElementTree as ET
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,6 +32,49 @@ def extract_notes(score):
         note_array = note_array[note_array["duration_div"] > 0]
 
     return note_array
+
+def extract_staff_by_note_id(file_path: str | Path) -> dict[str, int]:
+    """
+    Extract MusicXML <staff> for notes using each note's id attribute.
+
+    Returns:
+        {
+            "note-id": staff_number
+        }
+
+    If a note has no <staff>, it is skipped.
+    """
+    staff_by_id: dict[str, int] = {}
+
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+
+    # Handle MusicXML namespaces if present.
+    if root.tag.startswith("{"):
+        namespace = root.tag.split("}")[0].strip("{")
+        ns = {"mx": namespace}
+        note_path = ".//mx:note"
+        staff_path = "mx:staff"
+    else:
+        ns = {}
+        note_path = ".//note"
+        staff_path = "staff"
+
+    for note_el in root.findall(note_path, ns):
+        note_id = note_el.attrib.get("id")
+        if not note_id:
+            continue
+
+        staff_el = note_el.find(staff_path, ns)
+        if staff_el is None or staff_el.text is None:
+            continue
+
+        try:
+            staff_by_id[note_id] = int(staff_el.text)
+        except ValueError:
+            continue
+
+    return staff_by_id
 
 
 def _field_value(note: Any, field: str, default: Any) -> Any:

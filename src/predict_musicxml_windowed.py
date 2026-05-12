@@ -8,32 +8,57 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GINEConv
 
 from parser import load_score, extract_notes
 from graph_builder import build_graph
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "best_synthetic_gcn.pt"
+MODEL_PATH = BASE_DIR / "best_synthetic_gine.pt"
 OUTPUT_DIR = BASE_DIR / "predictions"
 
 LABEL_NAMES = ["scale", "arpeggio", "chord", "jump"]
 BEATS_PER_MEASURE = 4.0
 
 
-class TechniqueGCN(nn.Module):
-    def __init__(self, in_channels: int, hidden_channels: int = 64, out_channels: int = 4):
+class TechniqueGINE(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        edge_dim: int,
+        hidden_channels: int = 64,
+        out_channels: int = 4,
+    ):
         super().__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
+
+        self.node_encoder = nn.Linear(in_channels, hidden_channels)
+
+        nn1 = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels),
+        )
+
+        nn2 = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels),
+        )
+
+        self.conv1 = GINEConv(nn1, edge_dim=edge_dim)
+        self.conv2 = GINEConv(nn2, edge_dim=edge_dim)
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index)
+    def forward(self, x, edge_index, edge_attr):
+        x = self.node_encoder(x)
+
+        x = self.conv1(x, edge_index, edge_attr)
         x = F.relu(x)
-        x = self.conv2(x, edge_index)
+
+        x = self.conv2(x, edge_index, edge_attr)
         x = F.relu(x)
+
         return self.classifier(x)
 
 
@@ -59,7 +84,12 @@ def infer_measure_ids(note_array):
     return measure_ids
 
 
-def context_measures(target_measure: int, min_measure: int, max_measure: int, context: int = 1):
+def context_measures(
+    target_measure: int,
+    min_measure: int,
+    max_measure: int,
+    context: int = 1,
+):
     start = max(min_measure, target_measure - context)
     end = min(max_measure, target_measure + context)
     return list(range(start, end + 1))
@@ -79,7 +109,12 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
     max_measure = max(measure_ids)
 
     full_data = build_graph(note_array)
-    model = TechniqueGCN(in_channels=full_data.x.shape[1]).to(device)
+
+    model = TechniqueGINE(
+        in_channels=full_data.x.shape[1],
+        edge_dim=full_data.edge_attr.shape[1],
+    ).to(device)
+
     model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
     model.eval()
 
@@ -87,7 +122,14 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
 
     with torch.no_grad():
         for target_measure in range(min_measure, max_measure + 1):
-            ctx = set(context_measures(target_measure, min_measure, max_measure, context))
+            ctx = set(
+                context_measures(
+                    target_measure=target_measure,
+                    min_measure=min_measure,
+                    max_measure=max_measure,
+                    context=context,
+                )
+            )
 
             window_indices = [
                 i for i, measure in enumerate(measure_ids)
@@ -102,7 +144,7 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
 
             data = build_graph(window_note_array).to(device)
 
-            logits = model(data.x, data.edge_index)
+            logits = model(data.x, data.edge_index, data.edge_attr)
             probs = torch.sigmoid(logits).cpu()
 
             for local_idx, original_idx in enumerate(window_indices):
@@ -179,7 +221,11 @@ def save_piano_roll(rows: list[dict], output_path: Path):
         onset = row["onset_beat"]
         duration = row["duration_beat"]
         pitch = row["pitch"]
-        label = row["top_label"]
+        
+        if row["predicted_labels"] == "none":
+            label = "none"
+        else:
+            label = row["top_label"]
 
         plt.hlines(
             y=pitch,
@@ -193,7 +239,7 @@ def save_piano_roll(rows: list[dict], output_path: Path):
 
     plt.xlabel("Onset beat")
     plt.ylabel("Pitch MIDI")
-    plt.title("Windowed Predicted Piano Roll")
+    plt.title("Windowed Predicted Piano Roll — GINE")
 
     legend_handles = [
         plt.Line2D([0], [0], color=color, lw=6, label=label)
@@ -220,8 +266,8 @@ def main():
     )
 
     base_name = args.score.stem
-    csv_path = OUTPUT_DIR / f"{base_name}_windowed_predictions.csv"
-    png_path = OUTPUT_DIR / f"{base_name}_windowed_piano_roll.png"
+    csv_path = OUTPUT_DIR / f"{base_name}_windowed_gine_predictions.csv"
+    png_path = OUTPUT_DIR / f"{base_name}_windowed_gine_piano_roll.png"
 
     save_csv(rows, csv_path)
     save_piano_roll(rows, png_path)

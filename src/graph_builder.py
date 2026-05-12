@@ -1,37 +1,53 @@
-# graph_builder.py
-
 import torch
 from torch_geometric.data import Data
 
 
+BEATS_PER_MEASURE = 4.0
+
+
 def build_node_features(note_array):
     """
-    Convert notes → node feature matrix
+    Convert notes → normalized node feature matrix.
+
+    Each note = one node.
+
+    Node features:
+    [
+        pitch / 127,
+        duration / 4,
+        beat_in_measure / 4,
+        voice / 10,
+        pitch_class / 11,
+        octave / 10
+    ]
     """
 
     x = []
 
     for note in note_array:
-        pitch = note["pitch"]
-        onset = note["onset_beat"]
-        duration = note["duration_beat"]
-        voice = note["voice"]
+        pitch = float(note["pitch"])
+        onset = float(note["onset_beat"])
+        duration = float(note["duration_beat"])
+        voice = float(note["voice"])
 
         pitch_class = pitch % 12
         octave = pitch // 12
 
-        # simple placeholder for staff (you can improve later)
-        staff_id = 0 if pitch >= 60 else 1
+        # IMPORTANT:
+        # Do NOT use absolute onset like 200, 300, 400.
+        # Use position inside the measure instead.
+        beat_in_measure = onset % BEATS_PER_MEASURE
 
-        x.append([
-            pitch,
-            duration,
-            onset,
-            staff_id,
-            voice,
-            pitch_class,
-            octave
-        ])
+        x.append(
+            [
+                pitch / 127.0,
+                duration / BEATS_PER_MEASURE,
+                beat_in_measure / BEATS_PER_MEASURE,
+                voice / 10.0,
+                pitch_class / 11.0,
+                octave / 10.0,
+            ]
+        )
 
     return torch.tensor(x, dtype=torch.float)
 
@@ -39,9 +55,18 @@ def build_node_features(note_array):
 def build_edges(note_array):
     """
     Build music-aware edges:
+
     0 = temporal edge
-    1 = simultaneous/chord edge
+    1 = simultaneous/harmonic edge
     2 = same-voice edge
+
+    Normalized edge attributes:
+    [
+        relation_type / 3,
+        delta_onset / 4,
+        interval / 24,
+        same_voice
+    ]
     """
 
     edge_index = []
@@ -51,45 +76,41 @@ def build_edges(note_array):
     eps = 1e-5
 
     def add_edge(i, j, relation_type):
-        pitch_i = note_array[i]["pitch"]
-        pitch_j = note_array[j]["pitch"]
+        pitch_i = float(note_array[i]["pitch"])
+        pitch_j = float(note_array[j]["pitch"])
 
-        onset_i = note_array[i]["onset_beat"]
-        onset_j = note_array[j]["onset_beat"]
+        onset_i = float(note_array[i]["onset_beat"])
+        onset_j = float(note_array[j]["onset_beat"])
 
-        voice_i = note_array[i]["voice"]
-        voice_j = note_array[j]["voice"]
-
-        staff_i = 0 if pitch_i >= 60 else 1
-        staff_j = 0 if pitch_j >= 60 else 1
+        voice_i = int(note_array[i]["voice"])
+        voice_j = int(note_array[j]["voice"])
 
         delta_onset = onset_j - onset_i
         interval = pitch_j - pitch_i
 
-        same_staff = 1 if staff_i == staff_j else 0
-        same_voice = 1 if voice_i == voice_j else 0
+        same_voice = 1.0 if voice_i == voice_j else 0.0
 
         edge_index.append([i, j])
-        edge_attr.append([
-            relation_type,
-            delta_onset,
-            interval,
-            same_staff,
-            same_voice
-        ])
+        edge_attr.append(
+            [
+                relation_type / 3.0,
+                delta_onset / BEATS_PER_MEASURE,
+                interval / 24.0,
+                same_voice,
+            ]
+        )
 
-    # 1. Temporal edges: note i -> note i+1
+    # 1. Temporal edges: note i <-> note i+1
     for i in range(num_notes - 1):
         j = i + 1
-
         add_edge(i, j, relation_type=0)
         add_edge(j, i, relation_type=0)
 
     # 2. Simultaneous edges: notes starting at same time
     for i in range(num_notes):
         for j in range(i + 1, num_notes):
-            onset_i = note_array[i]["onset_beat"]
-            onset_j = note_array[j]["onset_beat"]
+            onset_i = float(note_array[i]["onset_beat"])
+            onset_j = float(note_array[j]["onset_beat"])
 
             if abs(onset_i - onset_j) < eps:
                 add_edge(i, j, relation_type=1)
@@ -99,14 +120,13 @@ def build_edges(note_array):
     voices = {}
 
     for i, note in enumerate(note_array):
-        voice = note["voice"]
+        voice = int(note["voice"])
         voices.setdefault(voice, []).append(i)
 
     for voice, note_indices in voices.items():
-        # Sort notes in this voice by onset
         note_indices = sorted(
             note_indices,
-            key=lambda idx: note_array[idx]["onset_beat"]
+            key=lambda idx: float(note_array[idx]["onset_beat"]),
         )
 
         for k in range(len(note_indices) - 1):
@@ -124,7 +144,7 @@ def build_edges(note_array):
 
 def build_graph(note_array):
     """
-    Full graph builder
+    Full graph builder.
     """
 
     x = build_node_features(note_array)
@@ -133,7 +153,7 @@ def build_graph(note_array):
     data = Data(
         x=x,
         edge_index=edge_index,
-        edge_attr=edge_attr
+        edge_attr=edge_attr,
     )
 
     return data
