@@ -26,10 +26,15 @@ DEFAULT_OUTPUT_DIR = BASE_DIR / "dataset" / "synthetic_graphs"
 
 BEATS_PER_MEASURE = 4.0
 
-# Simple fake hand / voice convention.
-# This is NOT staff. It is just a voice/register convention for synthetic data.
+# Simple synthetic hand / voice / staff convention.
+# Real scores now use Partitura staff:
+# staff 1 = upper staff
+# staff 2 = lower staff
 RIGHT_VOICE = 1
 LEFT_VOICE = 5
+
+RIGHT_STAFF = 1
+LEFT_STAFF = 2
 
 RIGHT_BASE_PITCHES = [60, 62, 64, 65, 67, 69]
 LEFT_BASE_PITCHES = [36, 40, 43, 48, 50, 52]
@@ -37,6 +42,11 @@ LEFT_BASE_PITCHES = [36, 40, 43, 48, 50, 52]
 HAND_TO_VOICE = {
     "right": RIGHT_VOICE,
     "left": LEFT_VOICE,
+}
+
+HAND_TO_STAFF = {
+    "right": RIGHT_STAFF,
+    "left": LEFT_STAFF,
 }
 
 
@@ -48,6 +58,7 @@ class FakeNoteRow:
     voice: int
     measure: int
     y: list[int]
+    staff: int = 0
 
     def __getitem__(self, key: str):
         return getattr(self, key)
@@ -60,6 +71,7 @@ def _make_note(
     voice: int,
     measure: int,
     label: str,
+    staff: int = 0,
 ) -> FakeNoteRow:
     return FakeNoteRow(
         pitch=pitch,
@@ -68,6 +80,7 @@ def _make_note(
         voice=voice,
         measure=measure,
         y=LABEL_TO_Y[label],
+        staff=staff,
     )
 
 
@@ -97,6 +110,7 @@ def _add_opposite_hand_support(
 
     support_hand = "left" if technique_hand == "right" else "right"
     support_voice = HAND_TO_VOICE[support_hand]
+    support_staff = HAND_TO_STAFF[support_hand]
 
     if support_hand == "left":
         bass = rng.choice([36, 40, 43, 48, 52])
@@ -112,6 +126,7 @@ def _add_opposite_hand_support(
                 onset_beat=start,
                 duration_beat=4.0,
                 voice=support_voice,
+                staff=support_staff,
                 measure=measure,
                 label="none",
             )
@@ -123,6 +138,7 @@ def _generate_scale_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
 
     hand = _choose_hand(rng)
     voice = HAND_TO_VOICE[hand]
+    staff = HAND_TO_STAFF[hand]
     base_pitch = _base_pitch_for_hand(rng, hand)
 
     scale_templates = [
@@ -148,6 +164,7 @@ def _generate_scale_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
                 onset_beat=start + i * 0.5,
                 duration_beat=0.5,
                 voice=voice,
+                staff=staff,
                 measure=measure,
                 label="scale",
             )
@@ -161,6 +178,7 @@ def _generate_arpeggio_measure(rng: random.Random, measure: int) -> list[FakeNot
 
     hand = _choose_hand(rng)
     voice = HAND_TO_VOICE[hand]
+    staff = HAND_TO_STAFF[hand]
     root = _base_pitch_for_hand(rng, hand)
 
     arpeggio_templates = [
@@ -186,6 +204,7 @@ def _generate_arpeggio_measure(rng: random.Random, measure: int) -> list[FakeNot
                 onset_beat=start + i * 0.5,
                 duration_beat=0.5,
                 voice=voice,
+                staff=staff,
                 measure=measure,
                 label="arpeggio",
             )
@@ -226,15 +245,13 @@ def _generate_chord_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
     else:
         duration = 1.0
 
-    if hand_mode == "both":
-        hands = ["left", "right"]
-    else:
-        hands = [hand_mode]
+    hands = ["left", "right"] if hand_mode == "both" else [hand_mode]
 
     notes: list[FakeNoteRow] = []
 
     for hand in hands:
         voice = HAND_TO_VOICE[hand]
+        staff = HAND_TO_STAFF[hand]
         root = _base_pitch_for_hand(rng, hand)
 
         for beat in beats:
@@ -245,6 +262,7 @@ def _generate_chord_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
                         onset_beat=start + beat,
                         duration_beat=duration,
                         voice=voice,
+                        staff=staff,
                         measure=measure,
                         label="chord",
                     )
@@ -258,6 +276,7 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
 
     hand = _choose_hand(rng)
     voice = HAND_TO_VOICE[hand]
+    staff = HAND_TO_STAFF[hand]
     base_pitch = _base_pitch_for_hand(rng, hand)
 
     is_jump_arpeggio = rng.random() < 0.25
@@ -284,6 +303,7 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
                 onset_beat=start + i * 0.5,
                 duration_beat=0.5,
                 voice=voice,
+                staff=staff,
                 measure=measure,
                 label=label,
             )
@@ -318,6 +338,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
                     onset_beat=start,
                     duration_beat=4.0,
                     voice=LEFT_VOICE,
+                    staff=LEFT_STAFF,
                     measure=measure,
                     label="none",
                 )
@@ -326,6 +347,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
     elif texture == "repeated_note":
         hand = _choose_hand(rng)
         voice = HAND_TO_VOICE[hand]
+        staff = HAND_TO_STAFF[hand]
         pitch = _base_pitch_for_hand(rng, hand)
 
         for beat in [0.0, 1.0, 2.0, 3.0]:
@@ -335,6 +357,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
                     onset_beat=start + beat,
                     duration_beat=1.0,
                     voice=voice,
+                    staff=staff,
                     measure=measure,
                     label="none",
                 )
@@ -352,6 +375,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
                 onset_beat=start,
                 duration_beat=4.0,
                 voice=LEFT_VOICE,
+                staff=LEFT_STAFF,
                 measure=measure,
                 label="none",
             )
@@ -364,6 +388,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
                     onset_beat=start + beat,
                     duration_beat=1.0,
                     voice=RIGHT_VOICE,
+                    staff=RIGHT_STAFF,
                     measure=measure,
                     label="none",
                 )
@@ -372,6 +397,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
     else:
         hand = _choose_hand(rng)
         voice = HAND_TO_VOICE[hand]
+        staff = HAND_TO_STAFF[hand]
         pitch = _base_pitch_for_hand(rng, hand)
 
         selected_beats = rng.sample([0.0, 1.0, 2.0, 3.0], rng.randint(1, 3))
@@ -383,6 +409,7 @@ def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
                     onset_beat=start + beat,
                     duration_beat=1.0,
                     voice=voice,
+                    staff=staff,
                     measure=measure,
                     label="none",
                 )
@@ -400,13 +427,18 @@ def generate_synthetic_piece(num_measures: int, rng: random.Random) -> list[Fake
         "none": _generate_none_measure,
     }
 
+    patterns = ["scale", "arpeggio", "chord", "jump", "none"]
+
+    # More none + less chord to avoid over-labeling.
+    weights = [0.17, 0.17, 0.10, 0.16, 0.40]
+
     notes: list[FakeNoteRow] = []
 
     for measure in range(num_measures):
-        pattern = rng.choice(list(measure_generators))
+        pattern = rng.choices(patterns, weights=weights, k=1)[0]
         notes.extend(measure_generators[pattern](rng, measure))
 
-    return sorted(notes, key=lambda note: (note.onset_beat, note.voice, note.pitch))
+    return sorted(notes, key=lambda note: (note.onset_beat, note.staff, note.voice, note.pitch))
 
 
 def _context_measures(target_measure: int, num_measures: int, context: int) -> list[int]:

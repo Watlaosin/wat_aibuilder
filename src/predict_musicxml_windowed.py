@@ -158,6 +158,7 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
         onset = float(get_note_value(note, "onset_beat", 0.0))
         duration = float(get_note_value(note, "duration_beat", 1.0))
         voice = int(get_note_value(note, "voice", 0))
+        staff = int(get_note_value(note, "staff", 0))
         measure = measure_ids[i]
 
         note_probs = final_probs[i]
@@ -183,6 +184,7 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
                 "onset_beat": onset,
                 "duration_beat": duration,
                 "voice": voice,
+                "staff": staff,
                 "predicted_labels": "+".join(predicted_labels),
                 "top_label": top_label,
                 "scale_prob": float(note_probs[0]),

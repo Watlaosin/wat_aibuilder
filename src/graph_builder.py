@@ -4,6 +4,19 @@ from torch_geometric.data import Data
 
 BEATS_PER_MEASURE = 4.0
 
+def get_note_value(note, key, default=0):
+    if isinstance(note, dict):
+        return note.get(key, default)
+
+    if hasattr(note, "dtype") and note.dtype.names and key in note.dtype.names:
+        value = note[key]
+        return value.item() if hasattr(value, "item") else value
+
+    try:
+        return note[key]
+    except Exception:
+        return default
+
 
 def build_node_features(note_array):
     """
@@ -17,6 +30,7 @@ def build_node_features(note_array):
         duration / 4,
         beat_in_measure / 4,
         voice / 10,
+        staff / 2.0,
         pitch_class / 11,
         octave / 10
     ]
@@ -25,10 +39,11 @@ def build_node_features(note_array):
     x = []
 
     for note in note_array:
-        pitch = float(note["pitch"])
-        onset = float(note["onset_beat"])
-        duration = float(note["duration_beat"])
-        voice = float(note["voice"])
+        pitch = float(get_note_value(note, "pitch", 60))
+        onset = float(get_note_value(note, "onset_beat", 0.0))
+        duration = float(get_note_value(note, "duration_beat", 1.0))
+        voice = float(get_note_value(note, "voice", 0))
+        staff = float(get_note_value(note, "staff", 0))
 
         pitch_class = pitch % 12
         octave = pitch // 12
@@ -44,6 +59,7 @@ def build_node_features(note_array):
                 duration / BEATS_PER_MEASURE,
                 beat_in_measure / BEATS_PER_MEASURE,
                 voice / 10.0,
+                staff / 2.0,
                 pitch_class / 11.0,
                 octave / 10.0,
             ]
@@ -65,7 +81,8 @@ def build_edges(note_array):
         relation_type / 3,
         delta_onset / 4,
         interval / 24,
-        same_voice
+        same_voice,
+        same_staff,
     ]
     """
 
@@ -76,19 +93,23 @@ def build_edges(note_array):
     eps = 1e-5
 
     def add_edge(i, j, relation_type):
-        pitch_i = float(note_array[i]["pitch"])
-        pitch_j = float(note_array[j]["pitch"])
+        pitch_i = float(get_note_value(note_array[i], "pitch", 60))
+        pitch_j = float(get_note_value(note_array[j], "pitch", 60))
 
-        onset_i = float(note_array[i]["onset_beat"])
-        onset_j = float(note_array[j]["onset_beat"])
+        onset_i = float(get_note_value(note_array[i], "onset_beat", 0.0))
+        onset_j = float(get_note_value(note_array[j], "onset_beat", 0.0))
 
-        voice_i = int(note_array[i]["voice"])
-        voice_j = int(note_array[j]["voice"])
+        voice_i = int(get_note_value(note_array[i], "voice", 0))
+        voice_j = int(get_note_value(note_array[j], "voice", 0))
+        
+        staff_i = int(get_note_value(note_array[i], "staff", 0))
+        staff_j = int(get_note_value(note_array[j], "staff", 0))
 
         delta_onset = onset_j - onset_i
         interval = pitch_j - pitch_i
 
         same_voice = 1.0 if voice_i == voice_j else 0.0
+        same_staff = 1.0 if staff_i != 0 and staff_i == staff_j else 0.0
 
         edge_index.append([i, j])
         edge_attr.append(
@@ -97,6 +118,7 @@ def build_edges(note_array):
                 delta_onset / BEATS_PER_MEASURE,
                 interval / 24.0,
                 same_voice,
+                same_staff,
             ]
         )
 
@@ -109,8 +131,8 @@ def build_edges(note_array):
     # 2. Simultaneous edges: notes starting at same time
     for i in range(num_notes):
         for j in range(i + 1, num_notes):
-            onset_i = float(note_array[i]["onset_beat"])
-            onset_j = float(note_array[j]["onset_beat"])
+            onset_i = float(get_note_value(note_array[i], "onset_beat", 0.0))
+            onset_j = float(get_note_value(note_array[j], "onset_beat", 0.0))
 
             if abs(onset_i - onset_j) < eps:
                 add_edge(i, j, relation_type=1)
@@ -120,13 +142,13 @@ def build_edges(note_array):
     voices = {}
 
     for i, note in enumerate(note_array):
-        voice = int(note["voice"])
+        voice = int(get_note_value(note, "voice", 0))
         voices.setdefault(voice, []).append(i)
 
     for voice, note_indices in voices.items():
         note_indices = sorted(
             note_indices,
-            key=lambda idx: float(note_array[idx]["onset_beat"]),
+            key=lambda idx: float(get_note_value(note_array[idx], "onset_beat", 0.0)),
         )
 
         for k in range(len(note_indices) - 1):
