@@ -4,6 +4,7 @@ from torch_geometric.data import Data
 
 BEATS_PER_MEASURE = 4.0
 
+
 def get_note_value(note, key, default=0):
     if isinstance(note, dict):
         return note.get(key, default)
@@ -30,7 +31,7 @@ def build_node_features(note_array):
         duration / 4,
         beat_in_measure / 4,
         voice / 10,
-        staff / 2.0,
+        staff / 2,
         pitch_class / 11,
         octave / 10
     ]
@@ -48,7 +49,6 @@ def build_node_features(note_array):
         pitch_class = pitch % 12
         octave = pitch // 12
 
-        # IMPORTANT:
         # Do NOT use absolute onset like 200, 300, 400.
         # Use position inside the measure instead.
         beat_in_measure = onset % BEATS_PER_MEASURE
@@ -72,7 +72,7 @@ def build_edges(note_array):
     """
     Build music-aware edges:
 
-    0 = temporal edge
+    0 = temporal edge within same staff
     1 = simultaneous/harmonic edge
     2 = same-voice edge
 
@@ -82,7 +82,7 @@ def build_edges(note_array):
         delta_onset / 4,
         interval / 24,
         same_voice,
-        same_staff,
+        same_staff
     ]
     """
 
@@ -101,7 +101,7 @@ def build_edges(note_array):
 
         voice_i = int(get_note_value(note_array[i], "voice", 0))
         voice_j = int(get_note_value(note_array[j], "voice", 0))
-        
+
         staff_i = int(get_note_value(note_array[i], "staff", 0))
         staff_j = int(get_note_value(note_array[j], "staff", 0))
 
@@ -122,13 +122,32 @@ def build_edges(note_array):
             ]
         )
 
-    # 1. Temporal edges: note i <-> note i+1
-    for i in range(num_notes - 1):
-        j = i + 1
-        add_edge(i, j, relation_type=0)
-        add_edge(j, i, relation_type=0)
+    # 1. Temporal edges: consecutive notes inside each staff.
+    # This avoids connecting LH bass notes directly to RH melody notes.
+    staff_groups = {}
 
-    # 2. Simultaneous edges: notes starting at same time
+    for i, note in enumerate(note_array):
+        staff = int(get_note_value(note, "staff", 0))
+        staff_groups.setdefault(staff, []).append(i)
+
+    for staff, note_indices in staff_groups.items():
+        note_indices = sorted(
+            note_indices,
+            key=lambda idx: (
+                float(get_note_value(note_array[idx], "onset_beat", 0.0)),
+                float(get_note_value(note_array[idx], "pitch", 60)),
+            ),
+        )
+
+        for k in range(len(note_indices) - 1):
+            i = note_indices[k]
+            j = note_indices[k + 1]
+
+            add_edge(i, j, relation_type=0)
+            add_edge(j, i, relation_type=0)
+
+    # 2. Simultaneous edges: notes starting at the same time.
+    # These can cross staves because harmony/chords often involve both hands.
     for i in range(num_notes):
         for j in range(i + 1, num_notes):
             onset_i = float(get_note_value(note_array[i], "onset_beat", 0.0))
@@ -138,7 +157,8 @@ def build_edges(note_array):
                 add_edge(i, j, relation_type=1)
                 add_edge(j, i, relation_type=1)
 
-    # 3. Same-voice edges: consecutive notes inside each voice
+    # 3. Same-voice edges: consecutive notes inside each voice.
+    # This is stricter than same-staff temporal edges.
     voices = {}
 
     for i, note in enumerate(note_array):

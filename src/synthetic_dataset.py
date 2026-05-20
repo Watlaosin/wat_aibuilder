@@ -272,6 +272,21 @@ def _generate_chord_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
 
 
 def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow]:
+    """
+    Generate jump examples.
+
+    Important labeling rule:
+    - For pure jump patterns:
+        only the notes involved in large leaps are labeled "jump"
+        other notes are labeled "none"
+
+    - For jump-arpeggio patterns:
+        all notes are labeled "arpeggio"
+        only the takeoff/landing notes of large leaps are labeled "jump_arpeggio"
+
+    This prevents the model from learning:
+        whole arpeggio texture = jump
+    """
     start = measure * BEATS_PER_MEASURE
 
     hand = _choose_hand(rng)
@@ -280,16 +295,37 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
     base_pitch = _base_pitch_for_hand(rng, hand)
 
     is_jump_arpeggio = rng.random() < 0.25
-    label = "jump_arpeggio" if is_jump_arpeggio else "jump"
 
     if is_jump_arpeggio:
-        intervals = [0, 12, 4, 16, 7, 19, 12, 24]
+        # Broken-chord shape with some big repositioning.
+        # Most notes should be arpeggio only.
+        # Only big-leap takeoff/landing notes get jump too.
+        intervals = rng.choice([
+            [0, 4, 7, 12, 7, 4, 0, 12],
+            [0, 7, 12, 16, 12, 7, 0, 12],
+            [0, 12, 7, 12, 4, 12, 7, 0],
+        ])
     else:
+        # Pure jump pattern.
+        # Only notes involved in big leaps get jump.
         intervals = rng.choice([
             [0, 12, 0, 12, -2, 10, -4, 8],
             [0, 13, -2, 15, 1, -12, 5, 18],
             [0, 9, -1, 10, -2, 11, -3, 12],
         ])
+
+    # Find local jump events.
+    # A jump is defined as a movement of at least one octave.
+    jump_indices: set[int] = set()
+
+    for i in range(1, len(intervals)):
+        prev_pitch = base_pitch + intervals[i - 1]
+        curr_pitch = base_pitch + intervals[i]
+
+        if abs(curr_pitch - prev_pitch) >= 12:
+            # Label both takeoff and landing notes.
+            jump_indices.add(i - 1)
+            jump_indices.add(i)
 
     notes: list[FakeNoteRow] = []
 
@@ -297,6 +333,15 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
         _add_opposite_hand_support(notes, rng, measure, hand)
 
     for i, interval in enumerate(intervals):
+        if is_jump_arpeggio:
+            # Every note is part of the arpeggio texture,
+            # but only jump_indices also get jump.
+            label = "jump_arpeggio" if i in jump_indices else "arpeggio"
+        else:
+            # Pure jump texture:
+            # only jump notes are jump; filler notes are none.
+            label = "jump" if i in jump_indices else "none"
+
         notes.append(
             _make_note(
                 pitch=base_pitch + interval,
@@ -310,7 +355,6 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
         )
 
     return notes
-
 
 def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow]:
     """
