@@ -15,7 +15,7 @@ from graph_builder import build_graph
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "best_synthetic_gine.pt"
+MODEL_PATH = BASE_DIR / "models" / "GINE_mixed_try.pt"
 OUTPUT_DIR = BASE_DIR / "predictions"
 
 LABEL_NAMES = ["scale", "arpeggio", "chord", "jump"]
@@ -257,7 +257,7 @@ def save_piano_roll(rows: list[dict], output_path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("score", type=Path)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threshold", type=float, default=0.3)
     parser.add_argument("--context", type=int, default=1)
     args = parser.parse_args()
 

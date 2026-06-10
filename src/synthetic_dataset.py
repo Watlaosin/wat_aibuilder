@@ -26,10 +26,6 @@ DEFAULT_OUTPUT_DIR = BASE_DIR / "dataset" / "synthetic_graphs"
 
 BEATS_PER_MEASURE = 4.0
 
-# Simple synthetic hand / voice / staff convention.
-# Real scores now use Partitura staff:
-# staff 1 = upper staff
-# staff 2 = lower staff
 RIGHT_VOICE = 1
 LEFT_VOICE = 5
 
@@ -100,12 +96,7 @@ def _add_opposite_hand_support(
     measure: int,
     technique_hand: str,
 ) -> None:
-    """
-    Add accompaniment in the opposite hand, labeled none.
 
-    This teaches:
-    LH/RH support + technique notes does NOT automatically mean block chord.
-    """
     start = measure * BEATS_PER_MEASURE
 
     support_hand = "left" if technique_hand == "right" else "right"
@@ -174,22 +165,76 @@ def _generate_scale_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
 
 
 def _generate_arpeggio_measure(rng: random.Random, measure: int) -> list[FakeNoteRow]:
+
     start = measure * BEATS_PER_MEASURE
 
-    hand = _choose_hand(rng)
+    arpeggio_type = rng.choices(
+        ["broken_chord", "alberti", "wide_smooth", "bass_reset"],
+        weights=[0.35, 0.25, 0.20, 0.20],
+        k=1,
+    )[0]
+
+    # Bass reset should mostly be left hand because that is where your model
+    # is currently creating false arpeggio+jump labels.
+    if arpeggio_type == "bass_reset":
+        hand = "left"
+    else:
+        hand = _choose_hand(rng)
+
     voice = HAND_TO_VOICE[hand]
     staff = HAND_TO_STAFF[hand]
     root = _base_pitch_for_hand(rng, hand)
 
-    arpeggio_templates = [
-        [0, 4, 7, 12, 7, 4, 0, 4],    # major
-        [0, 3, 7, 12, 7, 3, 0, 3],    # minor
-        [0, 4, 7, 10, 12, 10, 7, 4],  # dominant 7 style
-    ]
+    if arpeggio_type == "broken_chord":
+        templates = [
+            [0, 4, 7, 12, 7, 4, 0, 4],      # major broken chord
+            [0, 3, 7, 12, 7, 3, 0, 3],      # minor broken chord
+            [0, 4, 7, 10, 12, 10, 7, 4],    # dominant 7 style
+            [0, 7, 12, 7, 4, 7, 12, 7],     # open broken chord
+        ]
+        duration = 0.5
 
-    intervals = rng.choice(arpeggio_templates)
+    elif arpeggio_type == "alberti":
+        templates = [
+            [0, 7, 4, 7, 0, 7, 4, 7],       # C G E G
+            [0, 7, 3, 7, 0, 7, 3, 7],       # minor Alberti
+            [0, 12, 7, 12, 0, 12, 7, 12],   # wider Alberti, still not jump
+            [0, 7, 4, 7, 12, 7, 4, 7],      # extended Alberti
+        ]
+        duration = 0.5
 
-    if rng.random() < 0.5:
+    elif arpeggio_type == "wide_smooth":
+        templates = [
+            [0, 4, 7, 12, 16, 19, 24, 28],  # 3-octave-ish smooth major
+            [0, 3, 7, 12, 15, 19, 24, 27],  # 3-octave-ish smooth minor
+            [0, 4, 7, 12, 16, 19, 24, 19],  # wide then partial return
+            [0, 7, 12, 16, 19, 24, 28, 31], # wider open voicing
+        ]
+        duration = 0.5
+
+    else:
+        # Bass reset patterns.
+        # These intentionally contain big downward resets,
+        # but they are still accompaniment arpeggios, NOT jumps.
+        #
+        # Example:
+        # B2 -> D3 -> F#3 -> B3 -> F#2 -> A2 -> C#3 -> F#3
+        #
+        # The reset B3 -> F#2 is large, but musically it is normal LH patterning.
+        templates = [
+            [0, 3, 7, 12, -5, -2, 2, 7],
+            [0, 4, 7, 12, -5, 0, 4, 7],
+            [0, 4, 7, 12, -7, 0, 4, 7],
+            [0, 7, 12, 16, -5, 2, 7, 11],
+            [0, 5, 9, 14, -3, 2, 5, 9],
+        ]
+        duration = 0.5
+
+    intervals = rng.choice(templates)
+
+    # Do not reverse bass_reset too often.
+    # The false positives in real music are usually caused by downward resets.
+    if arpeggio_type != "bass_reset" and rng.random() < 0.5:
         intervals = list(reversed(intervals))
 
     notes: list[FakeNoteRow] = []
@@ -202,7 +247,7 @@ def _generate_arpeggio_measure(rng: random.Random, measure: int) -> list[FakeNot
             _make_note(
                 pitch=root + interval,
                 onset_beat=start + i * 0.5,
-                duration_beat=0.5,
+                duration_beat=duration,
                 voice=voice,
                 staff=staff,
                 measure=measure,
@@ -212,14 +257,8 @@ def _generate_arpeggio_measure(rng: random.Random, measure: int) -> list[FakeNot
 
     return notes
 
-
 def _generate_chord_measure(rng: random.Random, measure: int) -> list[FakeNoteRow]:
-    """
-    Generate block-chord technique.
 
-    This means notes intentionally pressed together as a block,
-    not just harmonic overlap between LH and RH.
-    """
     start = measure * BEATS_PER_MEASURE
 
     hand_mode = rng.choice(["right", "left", "both"])
@@ -272,21 +311,7 @@ def _generate_chord_measure(rng: random.Random, measure: int) -> list[FakeNoteRo
 
 
 def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow]:
-    """
-    Generate jump examples.
 
-    Important labeling rule:
-    - For pure jump patterns:
-        only the notes involved in large leaps are labeled "jump"
-        other notes are labeled "none"
-
-    - For jump-arpeggio patterns:
-        all notes are labeled "arpeggio"
-        only the takeoff/landing notes of large leaps are labeled "jump_arpeggio"
-
-    This prevents the model from learning:
-        whole arpeggio texture = jump
-    """
     start = measure * BEATS_PER_MEASURE
 
     hand = _choose_hand(rng)
@@ -294,36 +319,35 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
     staff = HAND_TO_STAFF[hand]
     base_pitch = _base_pitch_for_hand(rng, hand)
 
-    is_jump_arpeggio = rng.random() < 0.25
+    # Make jump_arpeggio rare.
+    is_jump_arpeggio = rng.random() < 0.10
 
     if is_jump_arpeggio:
-        # Broken-chord shape with some big repositioning.
-        # Most notes should be arpeggio only.
-        # Only big-leap takeoff/landing notes get jump too.
+        # These are intentionally more extreme than normal arpeggios.
+        # Normal wide arpeggios now live in _generate_arpeggio_measure().
         intervals = rng.choice([
-            [0, 4, 7, 12, 7, 4, 0, 12],
-            [0, 7, 12, 16, 12, 7, 0, 12],
-            [0, 12, 7, 12, 4, 12, 7, 0],
+            [0, 19, 4, 23, 7, 26, 12, 31],
+            [0, 24, 4, 28, 7, 31, 12, 36],
+            [0, 16, -5, 19, -2, 23, 4, 28],
         ])
+        jump_threshold = 17
     else:
-        # Pure jump pattern.
-        # Only notes involved in big leaps get jump.
+        # Pure jump patterns: back-and-forth hand relocation.
         intervals = rng.choice([
             [0, 12, 0, 12, -2, 10, -4, 8],
             [0, 13, -2, 15, 1, -12, 5, 18],
             [0, 9, -1, 10, -2, 11, -3, 12],
+            [0, 15, -3, 14, -5, 16, -2, 13],
         ])
+        jump_threshold = 12
 
-    # Find local jump events.
-    # A jump is defined as a movement of at least one octave.
     jump_indices: set[int] = set()
 
     for i in range(1, len(intervals)):
         prev_pitch = base_pitch + intervals[i - 1]
         curr_pitch = base_pitch + intervals[i]
 
-        if abs(curr_pitch - prev_pitch) >= 12:
-            # Label both takeoff and landing notes.
+        if abs(curr_pitch - prev_pitch) >= jump_threshold:
             jump_indices.add(i - 1)
             jump_indices.add(i)
 
@@ -334,12 +358,8 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
 
     for i, interval in enumerate(intervals):
         if is_jump_arpeggio:
-            # Every note is part of the arpeggio texture,
-            # but only jump_indices also get jump.
             label = "jump_arpeggio" if i in jump_indices else "arpeggio"
         else:
-            # Pure jump texture:
-            # only jump notes are jump; filler notes are none.
             label = "jump" if i in jump_indices else "none"
 
         notes.append(
@@ -357,12 +377,7 @@ def _generate_jump_measure(rng: random.Random, measure: int) -> list[FakeNoteRow
     return notes
 
 def _generate_none_measure(rng: random.Random, measure: int) -> list[FakeNoteRow]:
-    """
-    Generate neutral notes with no target technique.
 
-    This includes simple textures similar to easy piano arrangements:
-    held bass + simple melody, repeated notes, sparse notes, etc.
-    """
     start = measure * BEATS_PER_MEASURE
     notes: list[FakeNoteRow] = []
 
