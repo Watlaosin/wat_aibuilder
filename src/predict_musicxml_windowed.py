@@ -10,12 +10,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GINEConv
 
-from parser import load_score, extract_notes
-from graph_builder import build_graph
+from src.parser import load_score, extract_notes
+from src.graph_builder import build_graph
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "best_synthetic_gine.pt"
+MODEL_PATH = BASE_DIR / "models" / "GINE_mixed_try.pt"
 OUTPUT_DIR = BASE_DIR / "predictions"
 
 LABEL_NAMES = ["scale", "arpeggio", "chord", "jump"]
@@ -158,6 +158,7 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
         onset = float(get_note_value(note, "onset_beat", 0.0))
         duration = float(get_note_value(note, "duration_beat", 1.0))
         voice = int(get_note_value(note, "voice", 0))
+        staff = int(get_note_value(note, "staff", 0))
         measure = measure_ids[i]
 
         note_probs = final_probs[i]
@@ -183,6 +184,7 @@ def predict_windowed(score_path: Path, threshold: float = 0.5, context: int = 1)
                 "onset_beat": onset,
                 "duration_beat": duration,
                 "voice": voice,
+                "staff": staff,
                 "predicted_labels": "+".join(predicted_labels),
                 "top_label": top_label,
                 "scale_prob": float(note_probs[0]),
@@ -255,7 +257,7 @@ def save_piano_roll(rows: list[dict], output_path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("score", type=Path)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threshold", type=float, default=0.3)
     parser.add_argument("--context", type=int, default=1)
     args = parser.parse_args()
 
