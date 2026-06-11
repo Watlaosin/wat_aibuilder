@@ -20,13 +20,7 @@ def load_score(file_path: str | Path):
 
 
 def extract_notes(score):
-    """
-    Extract notes from Partitura.
-
-    We try include_staff=True first.
-    If the installed Partitura version does not support it,
-    we fall back to normal note_array().
-    """
+    
     try:
         note_array = score.note_array(include_staff=True)
     except TypeError:
@@ -142,3 +136,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+def parse_score(path):
+    score = load_score(path)
+    notes = extract_notes(score)
+    rows = notes_to_json_rows(notes)
+
+    return {
+        "num_notes": len(rows),
+        "first_note": rows[0] if rows else None,
+        "notes": rows,
+    }

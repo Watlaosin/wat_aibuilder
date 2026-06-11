@@ -535,7 +535,7 @@ def _make_window_graph(
 
 
 def make_synthetic_dataset(
-    num_pieces: int = 100,
+    num_pieces: int = 300,
     measures_per_piece: int = 8,
     context: int = 1,
     seed: int = 42,

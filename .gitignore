@@ -23,3 +23,11 @@ predictions/
 
 # annotated datasets
 dataset/labels/
+
+#test/raw files
+dataset/raw
+dataset/raw_musicXML
+
+# tempfiles
+uploads/
+outputs/

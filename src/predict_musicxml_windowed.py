@@ -10,8 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GINEConv
 
-from parser import load_score, extract_notes
-from graph_builder import build_graph
+from src.parser import load_score, extract_notes
+from src.graph_builder import build_graph
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent

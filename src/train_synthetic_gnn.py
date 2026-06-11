@@ -26,7 +26,7 @@ GRAPH_DIRS = [
     BASE_DIR / "dataset" / "graphs",
 ]
 
-MODEL_PATH = BASE_DIR / "models" / "GINE_mixed_try.pt"
+MODEL_PATH = BASE_DIR / "models" / "GINE_mixed_large.pt"
 
 LABEL_NAMES = ["scale", "arpeggio", "chord", "jump"]
 
@@ -161,15 +161,7 @@ def check_graphs(graphs):
 
 
 def split_train_val_by_piece(graphs, train_ratio=0.7, seed=42):
-    """
-    Splits graphs by piece_id into train and validation only.
 
-    Example:
-        70% of pieces -> train
-        30% of pieces -> validation
-
-    No test set here. Test should be kept in a separate folder/script later.
-    """
     piece_to_graphs = defaultdict(list)
 
     for graph in graphs:
