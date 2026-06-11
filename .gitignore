@@ -9,12 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-
-# Generated model/checkpoint files
-*.pt
-best_synthetic_gine.pt
-best_synthetic_gcn.pt
-
 # Generated datasets and outputs
 dataset/synthetic_graphs/
 dataset/graphs/
